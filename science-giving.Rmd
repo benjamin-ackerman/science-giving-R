@@ -10,7 +10,7 @@ Since FiveThirtyEight recently [shared access to a lot of their data](https://da
 
 Here are the packages I will be using:
 ```{r setup, echo=TRUE,results='hide', message=FALSE}
-require(RCurl)
+library(RCurl)
 library(reshape)
 library(dplyr)
 library(ggplot2)
