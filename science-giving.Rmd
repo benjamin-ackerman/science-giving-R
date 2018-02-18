@@ -19,6 +19,7 @@ library(rebus)
 library(maps)
 library(USAboundaries)
 ```
+*small note: in order to create some of the congressional district maps below, I had to install `ggplot2` directly from Github and then restart my R session in order to use `geom_sf`.*
 
 ### Download and clean data from 538's website
 ```{r download and clean data,cache=TRUE}
