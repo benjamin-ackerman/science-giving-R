@@ -6,6 +6,20 @@ date: "February 18, 2018"
 output: html_document
 ---
 
+<style>
+  .col2 {
+    columns: 2 200px;         /* number of columns and width in pixels*/
+    -webkit-columns: 2 200px; /* chrome, safari */
+    -moz-columns: 2 200px;    /* firefox */
+  }
+  .col3 {
+    columns: 3 100px;
+    -webkit-columns: 3 100px;
+    -moz-columns: 3 100px;
+  }
+</style>
+
+
 Since FiveThirtyEight recently [shared access to a lot of their data](https://data.fivethirtyeight.com), I thought it would be fun to download and analyze data from one of their blog posts in R.  I remember reading this article on [scientists' donations to political campaigns](https://fivethirtyeight.com/features/when-scientists-donate-to-politicians-its-usually-to-democrats/), and since the original blog post does not feature any visualizations, I thought I'd come up with some of my own.
 
 Here are the packages I will be using:
@@ -17,9 +31,12 @@ library(ggplot2)
 library(stringr)
 library(rebus)
 library(maps)
-library(USAboundaries)
+library(leaflet)
+library(tigris)
+library(purrr)
+library(knitr)
+library(kableExtra)
 ```
-*small note: in order to create some of the congressional district maps below, I had to install `ggplot2` directly from Github and then restart my R session in order to use `geom_sf`.*
 
 ### Download and clean data from 538's website
 ```{r download and clean data,cache=TRUE}
@@ -62,8 +79,8 @@ president_funding %>%
 ```
 
 ### Visualize Differences in Scientists' Donations to Congressional Races in 2016
-Here, I look at all records of scientists donating to congressional candidates from the 2016 election season.  I calculate the total dollars donated to Democrat and Republican candidates in each district, then look at the difference, to see where there is more money donated by scientists based on political party.  Districts that are darker blue reflect greater contributions to Democratic candidates, while districts that are darker red reflect greater contributions to Reblican candidates.  **Please note that this is all a work in progress.**
-```{r congress races, fig.align = 'center'}
+The FiveThirtyEight article noted that scientists were more willing to show support to candidates with scientific backgrounds.  Just for validation, we can look at a list of the ten Congressional Candidates in 2016 who received the most donations from scientists:
+```{r congress races, eval = FALSE, echo= FALSE, fig.align = 'center'}
 congress_map = us_congressional() %>% 
   mutate(cand_office_district = str_replace(cd115fp, START %R% "0",""),
          state_name = tolower(state_name)) %>% 
@@ -81,7 +98,8 @@ congress_funding = data_cleaned %>%
   cast(cand_office_st + cand_office_district ~ cand_pty_affiliation, value="money") %>% 
   filter(!is.na(cand_office_district)) %>% 
   mutate_all(funs(ifelse(is.na(.),0,.))) %>% 
-  mutate(party_diff = DEM - REP) %>% 
+  mutate(party_diff = DEM - REP,
+         cand_office_district = ifelse(cand_office_district == 0, 1, cand_office_district)) %>% 
   right_join(congress_map,by=c("cand_office_st","cand_office_district"))
 
 
@@ -91,28 +109,171 @@ congress_donations <- function(region){
       congress_funding %>% 
            filter(!cand_office_st %in% c("HI","AK")) %>% 
            ggplot() + 
-              geom_sf(aes(fill=party_diff)) +
+              geom_sf(aes(fill=party_diff),colour="grey",size=.5) +
               scale_fill_gradient2("Donation Diffs ($)",low = "darkred", mid = "white", high = "darkblue")+
               theme_void()+
               theme(panel.grid.major = element_line(colour = "white"))+
-              labs(title = "Partisan Differences in Scientist Donations to 2016 Congressional Races"))
+              labs(title = "Partisan Differences in Scientist Donations to 2016 Congressional Races")+coord_equal())
   }
   else{
   return(
     congress_funding %>% 
       filter(state_name %in% region) %>% 
       ggplot() + 
-        geom_sf(aes(fill=party_diff)) +
+        geom_sf(aes(fill=party_diff),colour="grey") +
         scale_fill_gradient2("Donation Diffs ($)",low = "darkred", mid = "white", high = "darkblue") +
-        theme_void() +
+        theme_void() + coord_equal()+
         theme(panel.grid.major = element_line(colour = "white")) +
-        labs(title = paste0("Partisan Differences in Scientist Donations to 2016 Congressional Races in ",region)))}
+        labs(title = "Partisan Differences in Scientist Donations to 2016 Congressional Races", subtitle = region))}
 }
 
-congress_donations("usa")
 
-congress_donations("texas")
+ggplotly(congress_donations('virginia'),tooltip = c("fill"))
 
-congress_donations("new jersey")
+ggplotly(congress_donations("usa"))
+
+congress_donations("virginia")
+
+congress_donations("north carolina")
+
+g = purrr::map(c("california","virginia","north carolina","texas"),
+           function(x) {
+             ggplot() + 
+               geom_sf(data = filter(congress_funding, state_name == x), aes(fill = party_diff)) +
+               theme_void()+scale_fill_gradient2("Donation Diffs ($)",low = "darkred", mid = "white", high = "darkblue") + 
+               theme(panel.grid.major = element_line(colour = "white")) + 
+               labs(subtitle = x)
+           })
+
+g2 <- cowplot::plot_grid(plotlist = g)
+g2
 ```
 
+
+```{r congress races most donations, eval=TRUE, echo=TRUE, results='asis'}
+data_cleaned %>% 
+  mutate(transaction_amt = as.numeric(transaction_amt),
+         district = paste(cand_office_st,cand_office_district,sep="-")) %>% 
+  filter(cand_pty_affiliation %in% c("DEM","REP"),
+         cycle == "2016",
+         cand_office == "H",
+         cand_status == "C")%>% 
+  group_by(district,cand_pty_affiliation,cand_name) %>% 
+  summarise(donations = sum(transaction_amt, na.rm=TRUE)) %>% #,
+            # pct_out_of_state = sum(cand_office_st != state, na.rm = TRUE)/n() * 100)
+  ungroup() %>% 
+  arrange(desc(donations)) %>% 
+  head(10) %>% 
+  kable("html") %>% 
+  kable_styling()
+```
+
+Of the list above, the two with the greatest amount of donations from scientists were Bill Foster, a former physicist, and Shaughnessy Naughton, a former drug researcher, both of whom were referenced in the original article.  Also on the list were Dr. Dena Grayson (MD, PhD), Raja Krishnamoorthi (Bachelor's degree in Mechanical Engineering), John Plumb (MS in Physics), and Jerry McNerney (PhD in Mathematics). While not all of these candidates won their respective races, several continue to dedicate time and resources to encouraging other scientists to [run for office](http://www.314action.org/mission-1/).
+
+Next, I 
+
+```{r congress races updated, eval = TRUE, cache=TRUE,message=FALSE,results='hide'}
+all_funding_data  = readRDS("all_funding_data.RDS")
+
+congress_funding = data_cleaned %>% 
+  mutate(transaction_amt = as.numeric(transaction_amt)) %>% 
+  filter(cand_pty_affiliation %in% c("DEM","REP"),
+         cycle == "2016",
+         cand_office == "H",
+         cand_status == "C")%>% 
+  group_by(cand_office_st,cand_pty_affiliation,cand_office_district) %>% 
+  summarise(money = sum(transaction_amt,na.rm=TRUE)) %>% 
+  cast(cand_office_st + cand_office_district ~ cand_pty_affiliation, value="money") %>% 
+  filter(!is.na(cand_office_district)) %>% 
+  mutate_all(funs(ifelse(is.na(.),0,.))) %>% 
+  mutate(party_diff = DEM - REP) %>% 
+  left_join(state.fips %>% 
+              select(cand_office_st = abb, fips) %>% 
+              filter(!duplicated(fips)),by="cand_office_st") %>% 
+  mutate(fips = ifelse(nchar(fips)== 1, paste0("0",fips),fips),
+         cand_office_district = ifelse(nchar(cand_office_district)== 1, paste0("0",cand_office_district),cand_office_district),
+         ID = paste(fips,cand_office_district,sep="_"),
+         cand_office_district = str_replace(cand_office_district,"00","01"),
+         ID_name = paste0(cand_office_st,cand_office_district)) %>% 
+  left_join(all_funding_data,by=c("cand_office_st","cand_office_district")) %>% 
+  rowwise() %>% 
+  mutate(dem_pct = ifelse(!D == 0, DEM/D * 100, 0),
+         rep_pct = ifelse(!R == 0, REP/R * 100, 0),
+         partisan_diff = sum(dem_pct,-rep_pct,na.rm=TRUE))
+```
+
+While it may be interesting to look at the candidates who received the most donations from scientists, I was also really curious to determine where donations from scientists were most ``impactful." By combining data from FiveThirtyEight with information on the total amount of money raised by each Congressional Candidate in the 2016 cycle, I wanted to see what percentage of the donations by political party and congressional district came from scientists.
+
+<div class="col2">
+```{r top percentages, echo=FALSE}
+congress_funding %>% 
+  arrange(desc(dem_pct)) %>% 
+  mutate(district = paste(cand_office_st,cand_office_district,sep="-")) %>% 
+  select(district,percent = dem_pct,winner) %>% 
+  head(5) %>% 
+  kable("html",caption = "Percent of Total Donations to Democratic Candidates from Scientists")%>% 
+  kable_styling()
+
+congress_funding %>% 
+  arrange(desc(rep_pct)) %>% 
+  mutate(district = paste(cand_office_st,cand_office_district,sep="-")) %>% 
+  select(district,percent = rep_pct,winner) %>% 
+  head(5) %>% 
+  kable("html",caption = "Percent of Total Donations to Republican Candidates from Scientists") %>% 
+  kable_styling()
+```
+</div>
+
+```{r plot setup, echo=FALSE,message=FALSE, results='hide'}
+districts = congressional_districts(cb=TRUE,year = 2016)
+districts$ID = paste(districts$STATEFP,districts$CD115FP,sep="_")
+
+data = geo_join(districts, congress_funding, 'ID', 'ID', how = 'left')
+
+dom = c(min(congress_funding$party_diff),-min(congress_funding$party_diff))
+
+test = colorRampPalette(c("red","white","blue"))
+pal2 <- colorBin(test(20), domain = dom, bins = 20,na.color=NA)
+
+data1 = data[which(data$party_diff < max(dom)),]
+data2 = data[which(data$party_diff > max(dom)),]
+
+popup1 <- paste(sep = "<br/>", 
+               paste0("<b>",data1$cand_office_st,"-",data1$cand_office_district,": ", data1$winner,"</b>"),
+               #paste0("<img src='http://www.house.state.tx.us/photos/members/", txlege$jpg, "' />"), 
+               paste0("<b>Donations from Scientists to Dems: </b> $", data1$DEM, " (",round(data1$dem_pct,2),"% of total)"), 
+               paste0("<b>Donations from Scientists to Reps: </b> $", data1$REP, " (",round(data1$rep_pct,2),"% of total)"))
+
+popup2 <- paste(sep = "<br/>", 
+               paste0("<b>",data2$cand_office_st,"-",data2$cand_office_district,": ", data2$winner,"</b>"),
+               #paste0("<img src='http://www.house.state.tx.us/photos/members/", txlege$jpg, "' />"), 
+               paste0("<b>Donations from Scientists to Dems: </b> $", data2$DEM, " (",round(data2$dem_pct,2),"% of total)"), 
+               paste0("<b>Donations from Scientists to Reps: </b> $", data2$REP, " (",round(data2$rep_pct,2),"% of total)"))
+```
+
+```{r plot congress donations, echo=FALSE, eval = TRUE, fig.align = "center",warning=FALSE,message=FALSE}
+leaflet() %>%
+  setView(lng = -98.5, lat =39.5,zoom=4) %>% 
+  addProviderTiles("CartoDB.Positron") %>%
+  addPolygons(data = data1, 
+              fillColor = ~colorBin(test(20), domain = dom, bins = 20,na.color=NA)(party_diff),
+              opacity=1,
+              weight = 1,
+              color = "white",
+              dashArray = "3",
+              popup = popup1,
+              fillOpacity = .9) %>% 
+  addPolygons(data = data2, 
+              fillColor = "darkblue",
+              opacity=1,
+              weight = 1,
+              color = "white",
+              dashArray = "3",
+              popup = popup2,
+              fillOpacity = .9) %>% 
+  addLegend(position = "bottomleft",
+            colors = c("blue", "red"), 
+            labels = c("Democratic Candidates", "Republican Candidates"), 
+            opacity = 1, 
+            title = "More Donations by Scientists to:")
+```

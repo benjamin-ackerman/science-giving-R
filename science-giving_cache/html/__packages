@@ -9,3 +9,8 @@ rebus
 maps
 USAboundaries
 bindrcpp
+leaflet
+tigris
+purrr
+knitr
+kableExtra
